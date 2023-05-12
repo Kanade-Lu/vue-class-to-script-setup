@@ -1,0 +1,40 @@
+{
+  "name": "vue-class-to-vue3-cli",
+  "version": "1.0.9",
+  "type": "module",
+  "description": "",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "esno src/index.ts",
+    "buildRun": "npm run build && esno bin/cli.js",
+    "build": "tsup src/*.ts src/core/*.ts --format esm,cjs --dts --clean"
+  },
+  "bin": {
+    "vue-class-to-vue3": "bin/cli.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "prompts": "^2.4.2",
+    "typescript": "^4.9.4",
+    "zx": "7.1.1"
+  },
+  "devDependencies": {
+    "@babel/core": "7.21.5",
+    "@babel/generator": "^7.21.5",
+    "@babel/parser": "7.21.5",
+    "@babel/preset-typescript": "^7.21.5",
+    "@babel/traverse": "^7.21.5",
+    "@babel/types": "^7.21.5",
+    "@types/babel__core": "^7.20.0",
+    "@types/babel__generator": "^7.6.4",
+    "@types/babel__traverse": "^7.18.5",
+    "@types/node": "^18.11.18",
+    "@types/prompts": "latest",
+    "esno": "^0.16.3",
+    "log-symbols": "^5.1.0",
+    "tsup": "6.5.0"
+  }
+}
