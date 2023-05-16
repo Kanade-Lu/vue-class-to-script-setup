@@ -1,4 +1,4 @@
-import { traverseCode } from './babel-traverse'
+import { traverseCode } from './traverse'
 
 const regExpFindLastImport = /^(?!@)import.*$/gm
 const typeMap = {
@@ -19,73 +19,49 @@ const pushAfterScript = (code: string, str: string) => {
   return code.replace(/<script(.*)/, `<script$1\n${str}\n`)
 }
 
-const deletePublishComponent = (code: string) => {
-  return code.replace(/@Component(\(\{[\s\S]*?\}\)\s*)?/g, '')
+
+const deleteSomethingAndPushDefineSomething = (code: string, regexp: RegExp, something: string) => {
+  const PropertyList: {
+    name: string
+    type: string
+  }[] = []
+  code = code.replace(regexp, (match: any, p1: string, p2: string, p3: string) => {
+    PropertyList.push({
+      name: p2.replace(';', ''),
+      type: p3,
+    })
+    return ''
+  })
+
+  let lastMatch: string | null = null
+  code.replace(regExpFindLastImport, (match: string) => {
+    lastMatch = match
+    return match
+  })
+  const nameArr = PropertyList.map(item => item.name)
+  const PropsStr = `const { ${nameArr.join(', ')} } = define${something}<{
+    ${PropertyList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
+  }>()`
+  if (lastMatch !== null && PropertyList.length !== 0)
+    return code.replace(lastMatch, `${lastMatch}\n${PropsStr}`)
+
+  return code
 }
 
 const deletePropsAndPushDefineProps = (code: string) => {
-  const PropsList: {
-    name: string
-    type: string
-  }[] = []
-  code = code.replace(/@Prop\(([\s\S]*?)\)\n?\s*readonly?\s*(\w*):?(.*);?/g, (match: any, p1: string, p2: string, p3: string) => {
-    PropsList.push({
-      name: p2.replace(';', ''),
-      type: p3,
-    })
-    return ''
-  })
-
-  let lastMatch: string | null = null
-  code.replace(regExpFindLastImport, (match: string) => {
-    lastMatch = match
-    return match
-  })
-  const nameArr = PropsList.map(item => item.name)
-  const PropsStr = `const { ${nameArr.join(', ')} } = defineProps<{
-    ${PropsList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
-  }>()`
-  if (lastMatch !== null && PropsList.length !== 0)
-    return code.replace(lastMatch, `${lastMatch}\n${PropsStr}`)
-
-  return code
+  return deleteSomethingAndPushDefineSomething(code, /@Prop\(([\s\S]*?)\)\n?\s*[readonly]?\s*(\w*):?(.*);?/g, 'Props')
 }
 
 const deleteModelAndPushDefineModel = (code: string) => {
-  const PropsList: {
-    name: string
-    type: string
-  }[] = []
-  code = code.replace(/@Model\(([\s\S]*?)\)\n?\s*\s*(\w*)!?:?(.*);?/g, (match: any, p1: string, p2: string, p3: string) => {
-    PropsList.push({
-      name: p2.replace(';', ''),
-      type: p3,
-    })
-    return ''
-  })
-
-  let lastMatch: string | null = null
-  code.replace(regExpFindLastImport, (match: string) => {
-    lastMatch = match
-    return match
-  })
-  const nameArr = PropsList.map(item => item.name)
-  const PropsStr = `const { ${nameArr.join(', ')} } = defineModel<{
-    ${PropsList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
-  }>()`
-  if (lastMatch !== null && PropsList.length !== 0)
-    return code.replace(lastMatch, `${lastMatch}\n${PropsStr}`)
-
-  return code
+  return deleteSomethingAndPushDefineSomething(code, /@Model\(([\s\S]*?)\)\n?\s*\s*(\w*)!?:?(.*);?/g, 'Model')
 }
 
 const deleteAllClassImport = (code: string) => {
   return code
     .replace(/import (.*) from 'vue-property-decorator';?/g, '')
     .replace(/import (.*) from 'vuex-class';?/g, '')
+    .replace(/import (.*) from 'vue-facing-decorator';?/g, '')
     .replace('export default ', '')
-
-  // .replace('\}\n</script>', '</script>')
 }
 
 const replaceScriptToScriptSetup = (code: string) => {
