@@ -1,10 +1,11 @@
 # vue-class → script setup
 
-使用方式  
-npm run build  
-pnpm link --global  
-vue-class-to-vue3  
-输入待转换的文件或者文件夹
+how to use
+
+npm i vue-class-to-vue3-cli
+vue-class-to-vue3
+输入待转换的文件或者文件夹 (input your file or folder want to convert)
+
 
 需要注意的点：
 
