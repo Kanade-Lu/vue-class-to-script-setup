@@ -1,4 +1,4 @@
-import { traverseCode } from './traverse'
+import { ComponentProps, traverseCode } from './traverse'
 
 const regExpFindLastImport = /^(?!@)import.*$/gm
 const typeMap = {
@@ -19,7 +19,6 @@ const pushAfterScript = (code: string, str: string) => {
   return code.replace(/<script(.*)/, `<script$1\n${str}\n`)
 }
 
-
 const deleteSomethingAndPushDefineSomething = (code: string, regexp: RegExp, something: string) => {
   const PropertyList: {
     name: string
@@ -32,20 +31,49 @@ const deleteSomethingAndPushDefineSomething = (code: string, regexp: RegExp, som
     })
     return ''
   })
-
-  let lastMatch: string | null = null
-  code.replace(regExpFindLastImport, (match: string) => {
-    lastMatch = match
-    return match
-  })
   const nameArr = PropertyList.map(item => item.name)
-  const PropsStr = `const { ${nameArr.join(', ')} } = define${something}<{
-    ${PropertyList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
-  }>()`
-  if (lastMatch !== null && PropertyList.length !== 0)
-    return code.replace(lastMatch, `${lastMatch}\n${PropsStr}`)
+  let PropsStr = ''
+  if (something === 'Props') {
+    PropsStr = `const props = define${something}<{
+      ${PropertyList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
+    }>()
+    const { ${nameArr.join(', ')} } = toRefs(props)
+    `
+  }
+  else {
+    PropsStr = `const { ${nameArr.join(', ')} } = define${something}<{
+      ${PropertyList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
+    }>()
+    `
+  }
+  if (!PropertyList.length)
+    return code
+  if (regExpFindLastImport.test(code)) {
+    return code.replace(regExpFindLastImport, (match: string) => {
+      return `${match}\n${PropsStr}`
+    })
+  }
+  else {
+    return pushAfterScript(code, PropsStr)
+  }
+}
 
-  return code
+export const addDefineProps = (code: string, PropertyList: { type: string; name: string }[], something: string) => {
+  const nameArr = PropertyList.map(item => item.name)
+  const PropsStr = `const props = define${something}<{
+    ${PropertyList.map(item => `${item.name}: ${item.type ? item.type : 'any'}`).join('\n')}
+  }>()
+  const { ${nameArr.join(', ')} } = toRefs(props)
+  `
+
+  if (regExpFindLastImport.test(code)) {
+    return code.replace(regExpFindLastImport, (match: string) => {
+      return `${match}\n${PropsStr}`
+    })
+  }
+  else {
+    return pushAfterScript(code, PropsStr)
+  }
 }
 
 const deletePropsAndPushDefineProps = (code: string) => {
@@ -54,6 +82,22 @@ const deletePropsAndPushDefineProps = (code: string) => {
 
 const deleteModelAndPushDefineModel = (code: string) => {
   return deleteSomethingAndPushDefineSomething(code, /@Model\(([\s\S]*?)\)\n?\s*\s*(\w*)!?:?(.*);?/g, 'Model')
+}
+
+export const addDefinePropsByComponentProps = (code: string) => {
+  return addDefineProps(code, ComponentProps, 'Props')
+}
+
+const deleteEmitAndPushDefineEmits = (code: string) => {
+  // 收集所有emit
+  const emitNameList = [...code.matchAll(/@Emit\('(\w+)'\)/g)]
+  const emitNameArr = emitNameList.map(item => item[1])
+  // 替换掉所有@Emit
+  code = code.replace(/@Emit\(([\s\S]*?)\)\n?\s*\s*(\w*).*\n*\s*.*\n*\s*\}/g, '')
+  if (emitNameArr.length > 0)
+    code = pushAfterLastImport(code, `const emit = defineEmits(${JSON.stringify(emitNameArr)})`)
+
+  return code
 }
 
 const deleteAllClassImport = (code: string) => {
@@ -139,6 +183,11 @@ const replaceNameSpace = (code: string) => {
       return match
     })
   }
+
+  const regexp = /const \w+ = (.*) => store.(.*)/
+  if (regexp.test(code))
+    shouldAddStore = true
+
   if (shouldAddStore)
     addStore()
 
@@ -146,7 +195,7 @@ const replaceNameSpace = (code: string) => {
 }
 
 const replaceThis = (code: string) => {
-  return code.replace(/this\./g, '')
+  return code.replace(/this\.\$?/g, '')
 }
 
 const replaceVueRouter = (code: string) => {
@@ -187,13 +236,16 @@ const regExpFor$ref = /(.*)\$refs.(.*)/
 const delete$ref = (code: string) => {
   const $refSet = new Set()
   if (regExpFor$ref.test(code)) {
-    code = code.replace(/(.*)\$refs.(\w+);?/g, (match, p1, p2) => {
+    code = code.replace(/(.*)\$refs.(\w+)(.*);?/g, (match, p1, p2) => {
       if (!$refSet.has(p2))
         $refSet.add(p2)
       return ''
     })
   }
   $refSet.forEach((item) => {
+    code = code.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gm, (match, p1) => {
+      return `<script lang="ts">\n${p1.replace(new RegExp(`${item}`, 'g'), `${item}.value`)}\n</script>`
+    })
     code = pushAfterLastImport(code, `const ${item} = ref();`)
   })
 
@@ -203,8 +255,14 @@ const delete$ref = (code: string) => {
 export const resolveCode = (code: string) => {
   code = deleteAllClassImport(code)
   code = replaceNormalVariableToRef(code)
+  code = deleteEmitAndPushDefineEmits(code)
   code = replaceNameSpace(code)
-  code = deletePropsAndPushDefineProps(code)
+  if (ComponentProps.length > 0)
+    code = addDefinePropsByComponentProps(code)
+
+  else
+    code = deletePropsAndPushDefineProps(code)
+
   code = deleteModelAndPushDefineModel(code)
   code = replaceScriptToScriptSetup(code)
   code = replaceThis(code)

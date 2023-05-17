@@ -2,11 +2,16 @@ import { parse } from '@babel/parser'
 import type { NodePath } from '@babel/core'
 import { traverse } from '@babel/core'
 import t from '@babel/types'
+import type { ObjectExpression } from '@babel/types'
 import * as generator from '@babel/generator'
 
+export const ComponentProps = [] as {
+  name: string
+  type: string
+}[]
 const refOrComputedProperty = new Set()
 const createProp = (item: t.ClassProperty, value: t.ArgumentPlaceholder | t.JSXNamespacedName | t.SpreadElement | t.Expression | t.TSAsExpression, callExpress = t.identifier('ref')) => {
-  const kind = t.identifier('ref') ? 'const' : 'let'
+  const kind = callExpress.name === 'ref' ? 'const' : 'let'
   const itemKey = item.key as t.Identifier
   if (callExpress.name === 'ref')
     refOrComputedProperty.add(itemKey.name)
@@ -65,7 +70,7 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
       prev.push(curv)
       return prev
     }
-    const { value } = curv
+    const { value, key } = curv
     const decorator = curv.decorators && curv.decorators[0]
     const checkDecoratorType = (str: string) => decorator && t.isDecorator(decorator) && t.isCallExpression(decorator.expression) && t.isIdentifier(decorator.expression.callee) && decorator.expression.callee.name === str
 
@@ -73,6 +78,7 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
     const isModel = checkDecoratorType('Model')
     const isProps = checkDecoratorType('Prop')
     const isRefDecorator = checkDecoratorType('Ref')
+    const ComponentPropsNameList = ComponentProps.map((item: any) => item.name)
 
     if (t.isStringLiteral(value))
       prev.push(createProp(curv, t.stringLiteral(value.value)))
@@ -85,11 +91,11 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
 
     else if (isModel || isProps)
       prev.push(curv)
-
+      // (isRefDecorator && !!decorator === false)
     else if (isRefDecorator || valueIsUndefined)
       prev.push(createProp(curv, t.nullLiteral()))
 
-    else if ((t.isIdentifier(value) && value.name !== 'undefined'))
+    else if ((t.isIdentifier(value) && value.name !== 'undefined') || (t.isIdentifier(key) && ComponentPropsNameList.includes(key.name)))
       return prev
     else if (t.isArrayExpression(value))
       prev.push(createProp(curv, t.arrayExpression(value.elements)))
@@ -99,6 +105,8 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
 
     else if (t.isTSAsExpression(value))
       prev.push(createProp(curv, value.expression, t.identifier('reactive')))
+    else
+      prev.push(curv)
 
     return prev
   }, [])
@@ -144,6 +152,7 @@ const replaceVuex = (path: NodePath<t.ClassProperty>) => {
               ),
               [
                 t.stringLiteral(value.value),
+                t.identifier('params'),
               ],
             ),
           ),
@@ -236,13 +245,17 @@ const replaceClassMethodToArrowFunction = (path: NodePath<t.ClassMethod>) => {
   if (!(path.node && path.node.body))
     return
   const { body } = path.node
+  const decorator = path.node.decorators && path.node.decorators[0]
+  const checkDecoratorType = (str: string) => decorator && t.isDecorator(decorator) && t.isCallExpression(decorator.expression) && t.isIdentifier(decorator.expression.callee) && decorator.expression.callee.name === str
+  if (checkDecoratorType('Emit'))
+    return
   if (t.isBlockStatement(body)) {
     const params = path.node.params as t.Identifier[]
     const func = t.arrowFunctionExpression(
       params,
       body,
     )
-    func.async = true
+    func.async = path.node.async
     const key = path.node.key
     if (!t.isIdentifier(key))
       return
@@ -260,13 +273,11 @@ const replaceClassMethodToArrowFunction = (path: NodePath<t.ClassMethod>) => {
 }
 const removeClass = (path: NodePath<t.ClassDeclaration>) => {
   const node = path.node
-  if(!t.isClassDeclaration(node)) return;
-  if (
-    node.superClass
-    && t.isCallExpression(node.superClass)
-    && (t.isIdentifier(node.superClass.callee) && node.superClass.callee.name === 'Mixins')
-    || (t.isIdentifier(node.superClass) &&  node.superClass.name === 'Vue')
-  )
+  if (!t.isClassDeclaration(node))
+    return
+  const isExtendsVue = t.isIdentifier(node.superClass) && node.superClass.name === 'Vue'
+  const isExtendsMixin = node.superClass && t.isCallExpression(node.superClass) && (t.isIdentifier(node.superClass.callee) && node.superClass.callee.name === 'Mixins')
+  if (isExtendsVue || isExtendsMixin)
     path.node.superClass = null
   path.replaceWithMultiple(path.node.body.body)
 }
@@ -276,9 +287,86 @@ const addPointValue = (path: NodePath<t.MemberExpression>) => {
   const { property } = node
   if (!t.isIdentifier(property))
     return
+
+  /**
+   * 为了避免MemberExpression和Identifier重名
+   * const totalNum = computed(() => {
+      return store.state.storeManage.totalNum.value;
+    });
+   */
+  // console.log(path.parentPath?.parentPath?.parentPath?.parentPath?.container?.id?.name, property.name)
+  const container = path.parentPath?.parentPath?.parentPath?.parentPath?.container as t.VariableDeclarator
+  const id = container?.id as t.Identifier
+  if (id?.name === property.name)
+    return
+
   if (refOrComputedProperty.has(property.name)) {
     const newNode = t.memberExpression(node.object, t.identifier(`${property.name}.value`))
     path.replaceWith(newNode)
+  }
+}
+
+const vueTypeMap = {
+  Number: 'number',
+  String: 'string',
+  Boolean: 'boolean',
+  Array: 'any[]',
+  Object: 'object',
+  Function: 'Function',
+  Promise: 'Promise',
+  Date: 'Date',
+  RegExp: 'RegExp',
+  Symbol: 'Symbol',
+}
+const findAllComponentProps = (path: NodePath<t.ClassDeclaration>) => {
+  if (!path.node.decorators)
+    return
+  const expression = path.node.decorators[0].expression
+  // delete @Component
+  if (t.isCallExpression(expression) && t.isIdentifier(expression.callee) && expression.callee.name === 'Component') {
+    (expression.arguments[0] as ObjectExpression).properties.forEach((item) => {
+      if (!t.isObjectProperty(item))
+        return
+      if (!t.isIdentifier(item.key))
+        return
+      if (!t.isObjectExpression(item.value))
+        return
+      if (item.key.name === 'props') {
+        item.value.properties.forEach((prop) => {
+          if (!t.isObjectProperty(prop))
+            return
+          if (t.isIdentifier(prop.key)) {
+            if (t.isIdentifier(prop.value)) {
+              ComponentProps.push({
+                name: prop.key.name,
+                type: vueTypeMap[prop.value.name as keyof typeof vueTypeMap],
+              })
+            }
+            const valueObjectExpression = prop.value
+
+            if (t.isObjectExpression(valueObjectExpression)) {
+              const property = valueObjectExpression.properties.find((item) => {
+                if (!t.isObjectProperty(item))
+                  return false
+                if (!t.isIdentifier(item.key))
+                  return false
+                return item.key.name === 'type'
+              })
+              if (!property)
+                return
+              if (!t.isObjectProperty(property))
+                return
+              if (!t.isIdentifier(property.value))
+                return
+              ComponentProps.push({
+                name: prop.key.name,
+                type: vueTypeMap[property?.value?.name as keyof typeof vueTypeMap],
+              })
+            }
+          }
+        })
+      }
+    })
   }
 }
 
@@ -290,17 +378,11 @@ export const traverseCode = (code: string) => {
     }]],
   })
   traverse(ast, {
-    Decorator(path) {
-      const expression = path.node.expression
-      // delete @Component
-      if (t.isCallExpression(expression) && t.isIdentifier(expression.callee) && expression.callee.name === 'Component')
-        path.remove()
-    },
-
     ClassProperty(path) {
       replaceVuex(path)
     },
     ClassDeclaration(path) {
+      findAllComponentProps(path)
       replaceClassPropertyToRefOrReactive(path)
       removeClass(path)
     },
@@ -309,7 +391,7 @@ export const traverseCode = (code: string) => {
       replaceGetToComputed(path)
       replaceClassMethodToArrowFunction(path)
     },
-    MemberExpression(path) {
+    MemberExpression(path: NodePath<t.MemberExpression>) {
       addPointValue(path)
     },
   })
