@@ -2,8 +2,8 @@
 
 how to use
 
-npm i vue-class-to-vue3-cli
-vue-class-to-vue3
+npm i vue-class-to-vue3-cli     
+vue-class-to-vue3   
 输入待转换的文件或者文件夹 (input your file or folder want to convert)
 
 
