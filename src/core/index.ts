@@ -5,6 +5,7 @@ const typeMap = {
   Getter: 'getters',
   Action: 'dispatch',
   State: 'state',
+  Mutation: 'commit',
 }
 const pushAfterLastImport = (code: string, str: string) => {
   const matches = [...code.matchAll(regExpFindLastImport)]
@@ -125,6 +126,18 @@ export const replaceFunctionToArrowFunction = (code: string) => {
     .replace(/(?!get)(?!if)\s+(async)? ((?!if)\w+)\s?\((.+)?\) \{/g, '\nconst $2 = $1($3) => {')
 }
 
+const addStore = (code: string) => {
+  code = code.replace(/<script(.*)/, '<script$1\nimport { useStore } from "vuex"\n')
+  code = pushAfterLastImport(code, 'const store = useStore()')
+  return code
+}
+const findVuexAndAddStore = (code: string) => {
+  if (code.includes('store.'))
+    code = addStore(code)
+
+  return code
+}
+
 const replaceNameSpace = (code: string) => {
   const matchList = [] as {
     name: string
@@ -132,7 +145,7 @@ const replaceNameSpace = (code: string) => {
     typeTitle: string
   }[]
   // 拿掉所有 const $1 = namespace('$2', $3)
-  code = code.replace(/const (.*) = namespace\('(.*)', (.*)\);?/g, (match: string, p1, p2, p3) => {
+  code = code.replace(/const (.*) = namespace\('(.*)'\);?|const (.*) = namespace\('(.*)', (.*)\);?/g, (match: string, p1, p2, p3) => {
     if (match) {
       matchList.push({
         typeTitle: p1,
@@ -142,28 +155,44 @@ const replaceNameSpace = (code: string) => {
     }
     return ''
   })
-  const addStore = () => {
-    code = code.replace(/<script(.*)/, '<script$1\nimport { useStore } from "vuex"\n')
-    code = pushAfterLastImport(code, 'const store = useStore()')
-  }
   let shouldAddStore = false
 
   if (matchList.length > 0) {
     shouldAddStore = true
     matchList.forEach((item) => {
       const regexp = new RegExp(`@${item.typeTitle}\\('(.*)'\\)\n?(.*);?`, 'g')
-      code = code.replace(regexp, (match, p1, p2) => {
-        if (item.type === 'Action')
-          return `const ${p1} = (params?) => store.${typeMap[item.type]}('${item.name}/${p1}', params)`
+      const regexp2 = new RegExp(`@${item.typeTitle}(.(Action|Mutation|State|Getter))?\\('(\\w+)'\\)\\n*\\s*(\\w+);?`, 'g')
+      if (regexp.test(code)) {
+        code = code.replace(regexp, (match, p1, p2) => {
+          if (item.type === 'Action')
+            return `const ${p1} = (params?) => store.${typeMap[item.type]}('${item.name}/${p1}', params)`
 
-        else if (item.type === 'State')
-          return `const ${p1} = store.${typeMap[item.type]}.${item.name}.${p1}`
+          else if (item.type === 'State')
+            return `const ${p1} = store.${typeMap[item.type]}.${item.name}.${p1}`
 
-        else if (item.type === 'Getter')
-          return `const ${p1} = computed(() => store.${typeMap[item.type]}[${item.name}/${p1}])`
+          else if (item.type === 'Getter')
+            return `const ${p1} = computed(() => store.${typeMap[item.type]}[${item.name}/${p1}])`
 
-        return ''
-      })
+          return ''
+        })
+      }
+      else if (regexp2.test(code)) {
+        code = code.replace(regexp2, (match, p1: string, p2, p3) => {
+          p1 = p1.replace('.', '')
+          if (p1 === 'Action')
+            return `const ${p3} = (params?) => store.${typeMap[p1]}('${item.name}/${p3}', params)`
+
+          else if (p1 === 'State')
+            return `const ${p3} = store.${typeMap[p1]}.${item.name}.${p2}`
+
+          else if (p1 === 'Getter')
+            return `const ${p3} = computed(() => store.${typeMap[p1]}[${item.name}/${p3}])`
+          else if (p1 === 'Mutation')
+            return `const ${p3} = (params?) => store.${typeMap[p1]}('${item.name}/${p3}', params)`
+
+          return ''
+        })
+      }
     })
   }
 
@@ -189,7 +218,7 @@ const replaceNameSpace = (code: string) => {
     shouldAddStore = true
 
   if (shouldAddStore)
-    addStore()
+    code = addStore(code)
 
   return code
 }
@@ -252,17 +281,20 @@ const delete$ref = (code: string) => {
   return code
 }
 
-export const resolveCode = (code: string) => {
+export const resolveCode = (code: string, isTs = false) => {
   code = deleteAllClassImport(code)
-  code = replaceNormalVariableToRef(code)
-  code = deleteEmitAndPushDefineEmits(code)
-  code = replaceNameSpace(code)
-  if (ComponentProps.length > 0)
-    code = addDefinePropsByComponentProps(code)
+  if (isTs)
+    code = traverseCode(code)
 
   else
-    code = deletePropsAndPushDefineProps(code)
+    code = replaceNormalVariableToRef(code)
 
+  code = deleteEmitAndPushDefineEmits(code)
+  code = findVuexAndAddStore(code)
+  if (ComponentProps.length > 0)
+    code = addDefinePropsByComponentProps(code)
+  else
+    code = deletePropsAndPushDefineProps(code)
   code = deleteModelAndPushDefineModel(code)
   code = replaceScriptToScriptSetup(code)
   code = replaceThis(code)

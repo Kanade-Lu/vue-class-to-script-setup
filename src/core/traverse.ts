@@ -2,7 +2,7 @@ import { parse } from '@babel/parser'
 import type { NodePath } from '@babel/core'
 import { traverse } from '@babel/core'
 import t from '@babel/types'
-import type { ObjectExpression } from '@babel/types'
+import type { ObjectExpression, TSTypeAnnotation } from '@babel/types'
 import * as generator from '@babel/generator'
 
 export const ComponentProps = [] as {
@@ -10,18 +10,36 @@ export const ComponentProps = [] as {
   type: string
 }[]
 const refOrComputedProperty = new Set()
-const createProp = (item: t.ClassProperty, value: t.ArgumentPlaceholder | t.JSXNamespacedName | t.SpreadElement | t.Expression | t.TSAsExpression, callExpress = t.identifier('ref')) => {
+const createProp = ({
+  item,
+  value,
+  callExpress,
+  tsType,
+}: {
+  item: t.ClassProperty
+  value: t.ArgumentPlaceholder | t.JSXNamespacedName | t.SpreadElement | t.Expression | t.TSAsExpression
+  callExpress?: t.Identifier
+  tsType?: t.TSType
+}) => {
+  callExpress = callExpress || t.identifier('ref')
   const kind = callExpress.name === 'ref' ? 'const' : 'let'
   const itemKey = item.key as t.Identifier
   if (callExpress.name === 'ref')
     refOrComputedProperty.add(itemKey.name)
 
+  const callExpression = t.callExpression(callExpress, [
+    value,
+  ])
+  if (tsType) {
+    callExpression.typeParameters = t.tsTypeParameterInstantiation([
+      tsType,
+    ])
+  }
+
   return t.variableDeclaration(kind, [
     t.variableDeclarator(
       t.identifier(itemKey.name),
-      t.callExpression(callExpress, [
-        value,
-      ]),
+      callExpression,
     ),
   ])
 }
@@ -72,39 +90,84 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
     }
     const { value, key } = curv
     const decorator = curv.decorators && curv.decorators[0]
-    const checkDecoratorType = (str: string) => decorator && t.isDecorator(decorator) && t.isCallExpression(decorator.expression) && t.isIdentifier(decorator.expression.callee) && decorator.expression.callee.name === str
+    const checkDecoratorType = (str: string) => {
+      if (!(decorator && t.isDecorator(decorator) && t.isCallExpression(decorator.expression)))
+        return false
+      const callee = decorator!.expression.callee
+      if (!callee)
+        return false
+      if (t.isIdentifier(callee))
+        return callee.name === str
+
+      if (t.isMemberExpression(callee) && t.isIdentifier(callee.property))
+        return callee.property.name === str
+
+      return false
+    }
 
     const valueIsUndefined = t.isIdentifier(value) && value.name === 'undefined'
+
     const isModel = checkDecoratorType('Model')
     const isProps = checkDecoratorType('Prop')
     const isRefDecorator = checkDecoratorType('Ref')
+
+    const isVuex = checkDecoratorType('State') || checkDecoratorType('Getter') || checkDecoratorType('Mutation') || checkDecoratorType('Action')
     const ComponentPropsNameList = ComponentProps.map((item: any) => item.name)
+    const typeAnnotation = curv.typeAnnotation as TSTypeAnnotation
+    const tsType = typeAnnotation && typeAnnotation.typeAnnotation
+    const isOnlyObjectType = (value === null || valueIsUndefined || t.isNullLiteral(value)) && t.isTSTypeLiteral(tsType)
 
-    if (t.isStringLiteral(value))
-      prev.push(createProp(curv, t.stringLiteral(value.value)))
+    const createValue = (value: any) => {
+      if (t.isStringLiteral(value))
+        return t.stringLiteral(value.value)
 
-    else if (t.isBooleanLiteral(value))
-      prev.push(createProp(curv, t.booleanLiteral(value.value)))
+      if (t.isBooleanLiteral(value))
+        return t.booleanLiteral(value.value)
 
-    else if (t.isNumericLiteral(value))
-      prev.push(createProp(curv, t.numericLiteral(value.value)))
+      if (t.isNumericLiteral(value))
+        return t.numericLiteral(value.value)
 
-    else if (isModel || isProps)
+      if (isRefDecorator || valueIsUndefined || value === null || t.isNullLiteral(value))
+        return t.nullLiteral()
+
+      if (t.isArrayExpression(value))
+        return t.arrayExpression(value.elements)
+
+      if (t.isTSAsExpression(value))
+        return value.expression
+
+      return value
+    }
+
+    const newProps = (itemValue: any, callExpress?: any): t.VariableDeclaration => {
+      const value = createValue(itemValue)
+      const options = {
+        item: curv,
+        value,
+        callExpress,
+      } as {
+        item: t.ClassProperty
+        value: t.ArgumentPlaceholder | t.JSXNamespacedName | t.SpreadElement | t.Expression | t.TSAsExpression
+        callExpress?: t.Identifier
+        tsType?: t.TSType
+      }
+      if (tsType)
+        options.tsType = tsType
+
+      return createProp(options)
+    }
+    if (isModel || isProps || isVuex)
       prev.push(curv)
-      // (isRefDecorator && !!decorator === false)
-    else if (isRefDecorator || valueIsUndefined)
-      prev.push(createProp(curv, t.nullLiteral()))
+
+    else if (t.isObjectExpression(value) || t.isTSAsExpression(value) || isOnlyObjectType)
+      prev.push(newProps(value, t.identifier('reactive')))
+
+    else if (t.isStringLiteral(value) || t.isBooleanLiteral(value) || t.isNumericLiteral(value) || isRefDecorator || valueIsUndefined || value === null || t.isArrayExpression(value) || t.isNullLiteral(value))
+      prev.push(newProps(value))
 
     else if ((t.isIdentifier(value) && value.name !== 'undefined') || (t.isIdentifier(key) && ComponentPropsNameList.includes(key.name)))
       return prev
-    else if (t.isArrayExpression(value))
-      prev.push(createProp(curv, t.arrayExpression(value.elements)))
 
-    else if (t.isObjectExpression(value))
-      prev.push(createProp(curv, value, t.identifier('reactive')))
-
-    else if (t.isTSAsExpression(value))
-      prev.push(createProp(curv, value.expression, t.identifier('reactive')))
     else
       prev.push(curv)
 
@@ -113,14 +176,13 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
 }
 
 const replaceVuex = (path: NodePath<t.ClassProperty>) => {
-// const replaceVuex = (path) => {
   const decorators = path.node.decorators
   const expression = decorators && decorators[0] && decorators[0].expression
   if (!expression)
     return
   if (!t.isCallExpression(expression))
     return
-  if (!t.isIdentifier(expression.callee))
+  if (!(t.isIdentifier(expression.callee) || t.isMemberExpression(expression.callee)))
     return
 
   const value = expression.arguments[0]
@@ -133,88 +195,112 @@ const replaceVuex = (path: NodePath<t.ClassProperty>) => {
 
   const keyName = key.name
 
-  if (expression.callee.name === 'Action') {
-    const params = t.identifier('params')
-    params.optional = true
-    // const ${keyName} = (params?) => store.dispatch('${value.value}')
-    path.replaceWithMultiple([
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(keyName),
+  const stateDeclaration = (identifier: t.Identifier, stringValue = t.stringLiteral(value.value)) => (t.variableDeclaration('const', [
+    t.variableDeclarator(
+      t.identifier(keyName),
+      t.callExpression(
+        t.identifier('computed'),
+        [
           t.arrowFunctionExpression(
-            [
-              params,
-            ],
-            t.callExpression(
+            [],
+            t.memberExpression(
               t.memberExpression(
                 t.identifier('store'),
-                t.identifier('dispatch'),
+                identifier,
               ),
-              [
-                t.stringLiteral(value.value),
-                t.identifier('params'),
-              ],
+              stringValue,
+              true,
             ),
           ),
-        ),
-      ]),
-    ])
-  }
+        ],
+      ),
+    ),
+  ]))
 
-  if (expression.callee.name === 'Getter') {
-  // const ${keyName} = computed(() => store.getters['${value.value}'])
-    refOrComputedProperty.add(keyName)
-    path.replaceWithMultiple([
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(keyName),
+  const callee = expression.callee
+  const params = t.identifier('params')
+  params.optional = true
+  const actionDeclaration = (identifier: t.Identifier, value: t.StringLiteral) => (
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier(keyName),
+        t.arrowFunctionExpression(
+          [
+            params,
+          ],
           t.callExpression(
-            t.identifier('computed'),
+            t.memberExpression(
+              t.identifier('store'),
+              // t.identifier('dispatch'),
+              identifier,
+            ),
             [
-              t.arrowFunctionExpression(
-                [],
-                t.memberExpression(
-                  t.memberExpression(
-                    t.identifier('store'),
-                    t.identifier('getters'),
-                  ),
-                  t.stringLiteral(value.value),
-                  true,
-                ),
-              ),
+              // t.stringLiteral(value.value),
+              value,
+              t.identifier('params'),
             ],
           ),
         ),
-      ]),
+      ),
     ])
-  }
+  )
 
-  if (expression.callee.name === 'State') {
-  // const ${keyName} = computed(() => store.state['${value.value}'])
-    refOrComputedProperty.add(keyName)
-    path.replaceWithMultiple([
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(keyName),
-          t.callExpression(
-            t.identifier('computed'),
-            [
-              t.arrowFunctionExpression(
-                [],
-                t.memberExpression(
-                  t.memberExpression(
-                    t.identifier('store'),
-                    t.identifier('state'),
-                  ),
-                  t.stringLiteral(value.value),
-                  true,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ]),
-    ])
+  if (t.isIdentifier(callee)) {
+    if (callee.name === 'Action') {
+      // const ${keyName} = (params?) => store.dispatch('${value.value}')
+      path.replaceWithMultiple([
+        actionDeclaration(t.identifier('dispatch'), t.stringLiteral(value.value)),
+      ])
+    }
+    else if (callee.name === 'Getter') {
+      // const ${keyName} = computed(() => store.getters['${value.value}'])
+      refOrComputedProperty.add(keyName)
+      path.replaceWithMultiple([
+        stateDeclaration(t.identifier('getters')),
+      ])
+    }
+
+    else if (callee.name === 'State') {
+      // const ${keyName} = computed(() => store.state['${value.value}'])
+      refOrComputedProperty.add(keyName)
+      path.replaceWithMultiple([
+        stateDeclaration(t.identifier('state')),
+      ])
+    }
+    else if (callee.name === 'Mutation') {
+      // const ${keyName} = (params?) => store.commit('${value.value}')
+      path.replaceWithMultiple([
+        actionDeclaration(t.identifier('commit'), t.stringLiteral(value.value)),
+      ])
+    }
+  }
+  else if (t.isMemberExpression(callee) && t.isIdentifier(callee.property) && t.isIdentifier(callee.object)) {
+    if (callee.property?.name === 'Action') {
+      path.replaceWithMultiple([
+        actionDeclaration(t.identifier('dispatch'), t.stringLiteral(`${callee.object.name}/${value.value}`)),
+      ])
+    }
+    else if (callee.property?.name === 'Mutation') {
+      // const ${keyName} = (params?) => store.commit('${value.value}')
+      path.replaceWithMultiple([
+        actionDeclaration(t.identifier('commit'), t.stringLiteral(`${callee.object.name}/${value.value}`)),
+      ])
+    }
+    else if (callee.property?.name === 'Getter') {
+      // const ${keyName} = computed(() => store.getters['${value.value}'])
+      refOrComputedProperty.add(keyName)
+      path.replaceWithMultiple([
+        stateDeclaration(t.identifier('getters'), t.stringLiteral(`${callee.object.name}/${value.value}`)),
+      ])
+    }
+
+    else if (callee.property?.name === 'State') {
+      // const ${keyName} = computed(() => store.state['${value.value}'])
+      refOrComputedProperty.add(keyName)
+      path.replaceWithMultiple([
+        stateDeclaration(t.identifier('state'), t.stringLiteral(`${callee.object.name}/${value.value}`)),
+      ])
+    }
   }
 }
 const replaceGetToComputed = (path: NodePath<t.ClassMethod>) => {
@@ -241,35 +327,102 @@ const replaceGetToComputed = (path: NodePath<t.ClassMethod>) => {
     ])
   }
 }
+
 const replaceClassMethodToArrowFunction = (path: NodePath<t.ClassMethod>) => {
+  const body = path.node.body
+  const params = path.node.params as t.Identifier[]
+  const func = t.arrowFunctionExpression(
+    params,
+    body,
+  )
+  func.async = path.node.async
+  const key = path.node.key
+  if (!t.isIdentifier(key))
+    return
+  const replaceBody = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      t.identifier(key.name),
+      func,
+    ),
+  ])
+
+  path.replaceWithMultiple([
+    replaceBody,
+  ])
+}
+
+/**
+ *  replace
+ *  @Watch('applicationTime')
+    handleApplicationTime(val) {
+      if (val) {
+        this.searchParams.signed_at_from = val[0]
+        this.searchParams.signed_at_to = val[1]
+      } else {
+        this.searchParams.signed_at_from = this.searchParams.signed_at_to = ''
+      }
+    }
+
+    to
+
+    watch(() => applicationTime, (val) => {
+      if (val) {
+        this.searchParams.signed_at_from = val[0]
+        this.searchParams.signed_at_to = val[1]
+      } else {
+        this.searchParams.signed_at_from = this.searchParams.signed_at_to = ''
+      }
+    })
+ */
+
+const replaceWatch = (path: NodePath<t.ClassMethod>) => {
+  const body = path.node.body
+  const params = path.node.params as t.Identifier[]
+  const func = t.arrowFunctionExpression(
+    params,
+    body,
+  )
+  func.async = path.node.async
+  // const key = path.node.key
+  const argument = path.node.decorators && path.node.decorators[0] && path.node.decorators[0].expression && t.isCallExpression(path.node.decorators[0].expression) && path.node.decorators[0].expression.arguments[0]
+  if (!(argument && t.isStringLiteral(argument)))
+    return
+  const key = argument.value
+  const replaceBody = t.expressionStatement(
+    t.callExpression(
+      t.identifier('watch'),
+      [
+        t.arrowFunctionExpression(
+          [],
+          t.memberExpression(
+            t.thisExpression(),
+            t.identifier(key),
+          ),
+        ),
+        func,
+      ],
+    ),
+  )
+
+  path.replaceWithMultiple([
+    replaceBody,
+  ])
+}
+
+const replaceClassMethod = (path: NodePath<t.ClassMethod>) => {
   if (!(path.node && path.node.body))
     return
-  const { body } = path.node
   const decorator = path.node.decorators && path.node.decorators[0]
-  const checkDecoratorType = (str: string) => decorator && t.isDecorator(decorator) && t.isCallExpression(decorator.expression) && t.isIdentifier(decorator.expression.callee) && decorator.expression.callee.name === str
+  const checkDecoratorType = (str: string) => {
+    return decorator && t.isDecorator(decorator) && t.isCallExpression(decorator.expression) && t.isIdentifier(decorator.expression.callee) && decorator.expression.callee.name === str
+  }
+
   if (checkDecoratorType('Emit'))
     return
-  if (t.isBlockStatement(body)) {
-    const params = path.node.params as t.Identifier[]
-    const func = t.arrowFunctionExpression(
-      params,
-      body,
-    )
-    func.async = path.node.async
-    const key = path.node.key
-    if (!t.isIdentifier(key))
-      return
-    const replaceBody = t.variableDeclaration('const', [
-      t.variableDeclarator(
-        t.identifier(key.name),
-        func,
-      ),
-    ])
-
-    path.replaceWithMultiple([
-      replaceBody,
-    ])
-  }
+  if (checkDecoratorType('Watch'))
+    replaceWatch(path)
+  else
+    replaceClassMethodToArrowFunction(path)
 }
 const removeClass = (path: NodePath<t.ClassDeclaration>) => {
   const node = path.node
@@ -369,6 +522,22 @@ const findAllComponentProps = (path: NodePath<t.ClassDeclaration>) => {
     })
   }
 }
+const removeNamespace = (path: NodePath<t.VariableDeclaration>) => {
+  const { node } = path
+  if (!t.isVariableDeclaration(node))
+    return
+  const { declarations } = node
+  if (!declarations.length)
+    return
+  const { init } = declarations[0]
+  if (!t.isCallExpression(init))
+    return
+  const callee = init.callee
+  if (!t.isIdentifier(callee))
+    return
+  if (callee.name === 'namespace')
+    path.remove()
+}
 
 export const traverseCode = (code: string) => {
   const ast = parse(code, {
@@ -378,6 +547,9 @@ export const traverseCode = (code: string) => {
     }]],
   })
   traverse(ast, {
+    VariableDeclaration(path) {
+      removeNamespace(path)
+    },
     ClassProperty(path) {
       replaceVuex(path)
     },
@@ -389,11 +561,12 @@ export const traverseCode = (code: string) => {
     ClassMethod(path) {
       replaceLifeStyle(path)
       replaceGetToComputed(path)
-      replaceClassMethodToArrowFunction(path)
+      replaceClassMethod(path)
     },
     MemberExpression(path: NodePath<t.MemberExpression>) {
       addPointValue(path)
     },
+
   })
 
   const result = new generator.CodeGenerator(ast, { }, code).generate()
