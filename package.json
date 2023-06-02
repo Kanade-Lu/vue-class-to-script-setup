@@ -1,6 +1,6 @@
 {
   "name": "vue-class-to-vue3-cli",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "type": "module",
   "description": "A script to convert your Vue class components to <script setup>  ",
   "main": "dist/index.js",
@@ -44,11 +44,13 @@
     "@types/babel__core": "^7.20.0",
     "@types/babel__generator": "^7.6.4",
     "@types/babel__traverse": "^7.18.5",
+    "@types/minimist": "^1.2.2",
     "@types/node": "^18.11.18",
     "@types/prompts": "latest",
     "bumpp": "^9.1.0",
     "esno": "^0.16.3",
     "log-symbols": "^5.1.0",
+    "minimist": "^1.2.8",
     "tsup": "6.5.0"
   }
 }
