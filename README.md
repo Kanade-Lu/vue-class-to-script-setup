@@ -4,11 +4,15 @@
 npm run build  
 pnpm link --global  
 
-vue-class-to-vue3 yourFileName
+vue-class-to-vue3 yourFileNameOrFolder
 or
 vue-class-to-vue3
-输入待转换的文件或者文件夹: yourFileName
+输入待转换的文件或者文件夹: yourFileNameOrFolder
 
+
+## 支持的选项
+### --toPinia （vue-class-to-vue3 yourFileNameOrFolder --toPinia）
+将插件转换后的vuex代码转换成pinia，由于pinia本身具备的namespace属性，所以只能将用了namespace的vuex代码进行转换.
 
 
 需要注意的点：
@@ -25,30 +29,12 @@ changeTest(test) {
 }
 
 =>
-
 // Bug
 const test = ref(1)
 function changeTest(test) {
     test.value = test
 }
 ```
-
-
-
-## 目前待处理的一个问题
-
-- 如果对象内有同名的ref变量会错误的加上.value
-```ts
-const test = ref(1)
-const testObj = reactive({
-    test: 2
-})
-function testFun() {
-    console.log(testObj.test.value)
-}
-```
-
-
 
 目前已经实现的转换
 

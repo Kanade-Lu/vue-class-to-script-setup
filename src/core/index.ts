@@ -289,7 +289,7 @@ export const replaceUpperMessage = (code: string) => {
 function replaceVuexToPinia(code: string) {
   const nameSpaceList: Record<string, string> = {}
 
-  const allDispatchRegex = /const (\w+) = \(params\?\) => store.dispatch\("(\w+)\/(\w+)", params\);/g
+  const allDispatchRegex = /const (\w+) = \(params\?\) => store.dispatch\(['|"](\w+)\/(\w+)['|"], params\)/g
   const dispatchList: {
     key: string
     storeKey: string
@@ -307,7 +307,7 @@ function replaceVuexToPinia(code: string) {
     return ''
   })
 
-  const allComputedRegex = /const (\w+) = computed\(\(\) => store.getters\["(\w+)\/(\w+)"\]\);/g
+  const allComputedRegex = /const (\w+) = computed\(\(\) => store.getters\[['|"](\w+)\/(\w+)['|"]\]\)/g
   const computedList: {
     key: string
     storeKey: string

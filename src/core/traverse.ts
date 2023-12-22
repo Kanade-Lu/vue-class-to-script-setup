@@ -4,6 +4,7 @@ import { traverse } from '@babel/core'
 import t from '@babel/types'
 import type { ObjectExpression, TSTypeAnnotation } from '@babel/types'
 import * as generator from '@babel/generator'
+import minimist from 'minimist'
 
 export const ComponentProps = [] as {
   name: string
@@ -12,6 +13,10 @@ export const ComponentProps = [] as {
 export function resetComponentProps() {
   ComponentProps.length = 0
 }
+
+const argv = minimist(process.argv.slice(3))
+const allRef = 'allRef' in argv ? Boolean(argv.allRef) : true
+
 
 const refOrComputedProperty = new Set()
 const reactiveProperty = new Set()
@@ -162,12 +167,11 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
 
       return createProp(options)
     }
-
     if (isModel || isProps || isVuex)
       prev.push(curv)
 
     else if (t.isObjectExpression(value) || t.isTSAsExpression(value) || isOnlyObjectType)
-      prev.push(newProps(value, t.identifier('reactive')))
+      allRef ? prev.push(newProps(value)) : prev.push(newProps(value, t.identifier('reactive')))
 
     else if (t.isStringLiteral(value) || t.isBooleanLiteral(value) || t.isNumericLiteral(value) || isRefDecorator || valueIsUndefined || value === null || t.isArrayExpression(value) || t.isNullLiteral(value))
       prev.push(newProps(value))
@@ -253,13 +257,13 @@ const replaceVuex = (path: NodePath<t.ClassProperty>) => {
   )
 
   if (t.isIdentifier(callee)) {
-    if (callee.name === 'Action') {
+    if (callee.name.includes('Action')) {
       // const ${keyName} = (params?) => store.dispatch('${value.value}')
       path.replaceWithMultiple([
         actionDeclaration(t.identifier('dispatch'), t.stringLiteral(value.value)),
       ])
     }
-    else if (callee.name === 'Getter') {
+    else if (callee.name.includes('Getter')) {
       // const ${keyName} = computed(() => store.getters['${value.value}'])
       refOrComputedProperty.add(keyName)
       path.replaceWithMultiple([
@@ -463,7 +467,7 @@ const addPointValue = (path: NodePath<t.MemberExpression>, refList?: Set<any>) =
   if (id?.name === property.name)
     return
 
-  if (refList.has(property.name)) {
+  if (refList.has(property.name)  && t.isThisExpression(path.node.object)) {
     const newNode = t.memberExpression(node.object, t.identifier(`${property.name}.value`))
     path.replaceWith(newNode)
   }
