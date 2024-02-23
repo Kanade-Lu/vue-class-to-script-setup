@@ -1,6 +1,6 @@
 {
   "name": "vue-class-to-vue3-cli",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "type": "module",
   "description": "A script to convert your Vue class components to <script setup>  ",
   "main": "dist/index.js",
@@ -25,7 +25,8 @@
     "release": "bumpp && npm publish"
   },
   "bin": {
-    "vue-class-to-vue3": "bin/cli.js"
+    "vue-class-to-vue3": "bin/cli.js",
+    "options-to-setup": "bin/options.js"
   },
   "author": "",
   "license": "ISC",

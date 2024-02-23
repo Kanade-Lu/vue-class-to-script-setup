@@ -16,13 +16,14 @@
     "strictNullChecks": true,
     "strictPropertyInitialization": true,
     "stripInternal": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true
   }, 
   "ts-node": {
     "esm": true
   },
   "include": [
-    "src/**/*.ts",
+    "src/**/*.ts", "src/core/options.js", "src/core/options.js", "src/core/options-traverse.js", "src/core/options-traverse.js",
   ],
   "exclude": [
     "node_modules"
