@@ -4,9 +4,9 @@
 npm run build  
 pnpm link --global  
 
-vue-class-to-vue3 yourFileNameOrFolder
-or
-vue-class-to-vue3
+vue-class-to-vue3 yourFileNameOrFolder  
+or   
+vue-class-to-vue3    
 输入待转换的文件或者文件夹: yourFileNameOrFolder
 
 
@@ -36,24 +36,8 @@ function changeTest(test) {
 }
 ```
 
-目前已经实现的转换
 
-| 待转换的代码 | 转换后的代码 |
-| --- | --- |
-| created | 在script setup 内相当于直接拿掉 created() {} |
-| mounted | onMounted |
-| ClassProperty | ref / reactive |
-| Get(classMethod) | Computed |
-| vuex-class处理 | 如果存在使用vuex-class,则会删除相应的import。改为使用 import { useStore } from "vuex”。 |
-| this.$ \|\| this. | 去除 |
-| vue-router | useRouter/useRoute |
-| @Component | 去掉 |
-| @Props |  defineProps |
-| `<script >` | `<script setup>` |
-| 函数 | 转为箭头函数 |
-| this.$refs.$1 | const $1 = ref() |
-| @Model | defineModel |
-| ref和computed在使用时的转换 | 收集所有computed和ref，在使用的后面添加.value |
-| @Ref($1) $2 | const $2 = ref() |
-| @Emit | const emit = defineEmits |
-| @Component({ props: {} }) | const {} = defineProps |
+#
+## 2024-05-30
+- 支持options转换为setup模式
+- 支持mixins-options转换为useHook（仅支持 .js文件）
