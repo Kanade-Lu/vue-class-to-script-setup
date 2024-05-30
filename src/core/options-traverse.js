@@ -301,7 +301,7 @@ export const traverseCode = (code) => {
             onMountedList.push(item)
         }
       })
-      const emitParams = t.arrayExpression(['update:status', 'tabChange'].map(item => t.stringLiteral(item)))
+      const emitParams = t.arrayExpression([...emitList].map(item => t.stringLiteral(item)))
       const defineEmits = t.callExpression(t.identifier('defineEmits'), [emitParams])
       const emitAst = t.variableDeclaration('const', [t.variableDeclarator(t.identifier('$emit'), defineEmits)])
       path.node.body = [...importList, emitAst, ...definePropsList, ...refList, ...computedList, ...methodList, ...watchList, ...onMountedList]
