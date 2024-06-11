@@ -20,13 +20,30 @@ const stateDeclaration = (keyName, identifier, stringValue) =>
     ),
   ])
 
+const createComputed = (keyName, body) => {
+  return t.variableDeclaration('const', [
+    t.variableDeclarator(
+      t.identifier(keyName),
+      t.callExpression(t.identifier('computed'), [
+        t.arrowFunctionExpression(
+          [],
+          body,
+        ),
+      ]),
+    ),
+  ])
+}
+
 const actionDeclaration = (keyName, params, value, type = t.identifier('dispatch')) => (
   t.variableDeclaration('const', [
     t.variableDeclarator(
       t.identifier(keyName),
       t.arrowFunctionExpression(
         [
-          params,
+          {
+            ...params,
+            optional: true,
+          },
         ],
         t.callExpression(
           t.memberExpression(
@@ -62,13 +79,29 @@ const createProp = ({ item, value, callExpress, tsType }) => {
   return t.variableDeclaration('const', [t.variableDeclarator(t.identifier(itemKey.name), callExpression)])
 }
 
+const recordNamespaceInfo = {
+  actionsName: '',
+  gettersName: '',
+  namespaced: '',
+}
 export const traverseCode = (code) => {
   const ast = parse(code, {
     sourceType: 'module',
     plugins: ['typescript'],
   })
   traverse(ast, {
+    CallExpression(path) {
+      if (path.node.callee.name === 'createNamespacedHelpers') {
+        path.parent.id.properties.forEach((item) => {
+          if (item.key.name === 'mapActions')
+            recordNamespaceInfo.actionsName = item.value.name
 
+          if (item.key.name === 'mapGetters')
+            recordNamespaceInfo.gettersName = item.value.name
+        })
+        recordNamespaceInfo.namespaced = path.node.arguments[0].value
+      }
+    },
     ObjectMethod(path) {
       if (path.node.key.name === 'data') {
         try {
@@ -112,7 +145,7 @@ export const traverseCode = (code) => {
       }
     },
     ObjectProperty(path) {
-      const handleVuex = (item, type) => {
+      const handleActionsAndMutations = (item, type) => {
         if (item.argument.arguments.length === 1 && t.isArrayExpression(item.argument.arguments[0])) {
           const actions = item.argument.arguments[0].elements
           actions.forEach((item) => {
@@ -123,7 +156,7 @@ export const traverseCode = (code) => {
         if (item.argument.arguments.length === 1 && t.isObjectExpression(item.argument.arguments[0])) {
           const actions = item.argument.arguments[0].properties
           actions.forEach((item) => {
-            const key = item.key?.name
+            const key = item.key?.name || ''
             const value = item.value.value || item.value.name
             const computedNode = actionDeclaration(key, t.identifier('params'), t.stringLiteral(value), type)
             path.parentPath.parentPath.container.push(computedNode)
@@ -142,7 +175,6 @@ export const traverseCode = (code) => {
           const namespace = item.argument.arguments[0].value
           actions.forEach((item) => {
             const actionsNode = actionDeclaration(item.value.value || item.value.name, t.identifier('params'), t.stringLiteral(`${namespace}/${item.value.value || item.value.name}`), type)
-
             path.parentPath.parentPath.container.push(actionsNode)
           })
         }
@@ -151,15 +183,15 @@ export const traverseCode = (code) => {
       try {
         if (path.node.key.name === 'methods') {
           path.node.value.properties.forEach((item) => {
-            if (t.isSpreadElement(item) && t.isCallExpression(item.argument) && item.argument.callee.name === 'mapActions') {
-              handleVuex(item)
+            if (t.isSpreadElement(item) && t.isCallExpression(item.argument) && (['mapActions', recordNamespaceInfo.actionsName].includes(item.argument.callee?.name))) {
+              handleActionsAndMutations(item)
             }
-            else if (t.isSpreadElement(item) && t.isCallExpression(item.argument) && item.argument.callee.name === 'mapMutations') {
-              handleVuex(item, t.identifier('commit'))
+            else if (t.isSpreadElement(item) && t.isCallExpression(item.argument) && item.argument.callee?.name === 'mapMutations') {
+              handleActionsAndMutations(item, t.identifier('commit'))
             }
             else {
               const newNode = t.variableDeclaration('const', [
-                t.variableDeclarator(t.identifier(item.key.name), t.arrowFunctionExpression(item.params, item.body, item.async)),
+                t.variableDeclarator(t.identifier(item.key?.name || item.callee?.name || ''), t.arrowFunctionExpression(item.params, item.body, item.async)),
               ])
 
               path.parentPath.parentPath.container.push(newNode)
@@ -172,8 +204,18 @@ export const traverseCode = (code) => {
       }
       if (path.node.key.name === 'computed') {
         path.node.value.properties?.forEach((item) => {
-          if (t.isSpreadElement(item) && t.isCallExpression(item.argument) && item.argument.callee.name === 'mapGetters') {
-            if (item.argument.arguments.length === 1) {
+          // 处理mapGetters
+          if (t.isSpreadElement(item) && t.isCallExpression(item.argument) && (['mapGetters', recordNamespaceInfo.gettersName].includes(item.argument.callee?.name))) {
+            if (recordNamespaceInfo.gettersName === item.argument.callee?.name) {
+              const getters = item.argument.arguments[0].elements
+              getters.forEach((item) => {
+                refOrComputedProperty.add(item.value)
+                const computedNode = stateDeclaration(item.value, t.identifier('getters'), t.stringLiteral(`${recordNamespaceInfo.namespaced}/${item.value}`))
+                path.parentPath.parentPath.container.splice(2, 0, computedNode)
+              })
+            }
+
+            if (item.argument.arguments.length === 1 && recordNamespaceInfo.gettersName !== item.argument.callee?.name) {
               const getters = item.argument.arguments[0].elements
               getters.forEach((item) => {
                 refOrComputedProperty.add(item.value)
@@ -181,6 +223,7 @@ export const traverseCode = (code) => {
                 path.parentPath.parentPath.container.splice(2, 0, computedNode)
               })
             }
+            // 处理带namespaced的情况
             if (item.argument.arguments.length === 2 && t.isStringLiteral(item.argument.arguments[0])) {
               const getters = item.argument.arguments[1].elements
               const namespace = item.argument.arguments[0].value
@@ -190,6 +233,12 @@ export const traverseCode = (code) => {
                 path.parentPath.parentPath.container.splice(2, 0, computedNode)
               })
             }
+          }
+          // 处理一般computed
+          if (t.isObjectMethod(item)) {
+            refOrComputedProperty.add(item.key.name)
+            const computedNode = createComputed(item.key.name, item.body)
+            path.parentPath.parentPath.container.push(computedNode)
           }
         })
       }
@@ -304,7 +353,10 @@ export const traverseCode = (code) => {
       const emitParams = t.arrayExpression([...emitList].map(item => t.stringLiteral(item)))
       const defineEmits = t.callExpression(t.identifier('defineEmits'), [emitParams])
       const emitAst = t.variableDeclaration('const', [t.variableDeclarator(t.identifier('$emit'), defineEmits)])
-      path.node.body = [...importList, emitAst, ...definePropsList, ...refList, ...computedList, ...methodList, ...watchList, ...onMountedList]
+      if (emitList.length > 0)
+        path.node.body = [...importList, emitAst, ...definePropsList, ...refList, ...computedList, ...methodList, ...watchList, ...onMountedList]
+      else
+        path.node.body = [...importList, ...definePropsList, ...refList, ...computedList, ...methodList, ...watchList, ...onMountedList]
     },
   })
 
