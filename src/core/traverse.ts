@@ -2,7 +2,7 @@ import { parse } from '@babel/parser'
 import type { NodePath } from '@babel/core'
 import { traverse } from '@babel/core'
 import t from '@babel/types'
-import type { ObjectExpression, TSTypeAnnotation } from '@babel/types'
+import type { ObjectExpression, ObjectProperty, TSTypeAnnotation } from '@babel/types'
 import * as generator from '@babel/generator'
 import minimist from 'minimist'
 
@@ -55,6 +55,48 @@ const createProp = ({
   ])
 }
 
+const replaceUniAppLiftStyle = (path: NodePath<t.ClassMethod>) => {
+  const keyNode = path.node.key
+  if (!t.isIdentifier(keyNode))
+    return
+
+  const replaceKeyNodeNameList = [
+    'onShow',
+    'onLoad',
+    'onHide',
+    'onReachBottom',
+    'onPageScroll',
+  ]
+  if (replaceKeyNodeNameList.includes(keyNode.name)) {
+    const body = path.node.body.body
+    const asyncFn = body.some((node) => {
+      if (t.isExpressionStatement(node))
+        return t.isAwaitExpression(node.expression)
+
+      return false
+    })
+    const mountedBody = t.arrowFunctionExpression(
+      [],
+      t.blockStatement(body),
+    )
+    if (asyncFn)
+      mountedBody.async = true
+
+    const liftStyle = t.expressionStatement(
+      t.callExpression(
+        t.identifier(keyNode.name),
+        [
+          mountedBody,
+        ],
+      ),
+    )
+
+    path.replaceWithMultiple([
+      liftStyle,
+    ])
+  }
+}
+
 const replaceLifeStyle = (path: NodePath<t.ClassMethod>) => {
   const keyNode = path.node.key
   if (!t.isIdentifier(keyNode))
@@ -66,8 +108,12 @@ const replaceLifeStyle = (path: NodePath<t.ClassMethod>) => {
   if (keyNode.name === 'mounted' || keyNode.name === 'created') {
     const body = path.node.body.body
     const asyncFn = body.some((node) => {
-      if (t.isExpressionStatement(node))
+      if (t.isExpressionStatement(node)) {
+        if (t.isAssignmentExpression(node.expression))
+          return t.isAwaitExpression(node.expression.right)
+
         return t.isAwaitExpression(node.expression)
+      }
 
       return false
     })
@@ -611,6 +657,26 @@ const replaceReactiveExpressionStatement = (path: NodePath<t.ExpressionStatement
   path.replaceWith(newNode)
 }
 
+const replaceArrowClassMethod = (path: NodePath<t.ClassProperty>) => {
+  if (!path.node || !t.isArrowFunctionExpression(path.node.value))
+    return
+
+  if (!t.isIdentifier(path.node.key))
+    return
+  const arrowValue = path.node.value
+  path.replaceWithMultiple([
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier(path.node.key.name),
+        t.arrowFunctionExpression(
+          arrowValue.params,
+          arrowValue.body,
+        ),
+      ),
+    ]),
+  ])
+}
+
 export const traverseCode = (code: string) => {
   const ast = parse(code, {
     sourceType: 'module',
@@ -621,6 +687,7 @@ export const traverseCode = (code: string) => {
   traverse(ast, {
     ClassProperty(path) {
       replaceVuex(path)
+      replaceArrowClassMethod(path)
     },
     ClassDeclaration(path) {
       findAllComponentProps(path)
@@ -629,6 +696,7 @@ export const traverseCode = (code: string) => {
     },
     ClassMethod(path) {
       replaceLifeStyle(path)
+      replaceUniAppLiftStyle(path)
       replaceGetToComputed(path)
       replaceClassMethod(path)
     },
@@ -707,3 +775,53 @@ export const addPointValueForToRefs = (code: string) => {
     return code
   }
 }
+const createArrowFunction = (body: t.Statement[]) => {
+  return t.variableDeclaration('const', [
+    t.variableDeclarator(
+      t.identifier('useXXX'),
+      t.arrowFunctionExpression(
+        [],
+        t.blockStatement(body),
+      ),
+    ),
+  ])
+}
+export const createUseXXX = (code: string) => {
+  try {
+    const ast = parse(code, {
+      sourceType: 'module',
+      plugins: ['typescript', 'classProperties', ['decorators', {
+        decoratorsBeforeExport: true,
+      }]],
+    })
+    traverse(ast, {
+      Program(path) {
+        const importList = path.node.body.filter(item => item.type === 'ImportDeclaration')
+        const expressionList = path.node.body.filter(item => item.type === 'ExpressionStatement')
+
+        const otherBody = path.node.body.filter(item => item.type === 'VariableDeclaration')
+        const createReturnList = otherBody
+          .filter(item => item.type === 'VariableDeclaration' && t.isIdentifier(item.declarations[0].id))
+          .map((item) => {
+        	if (item.type === 'VariableDeclaration' && t.isIdentifier(item.declarations[0].id))
+              return t.objectProperty(t.identifier(item.declarations[0].id.name), t.identifier(item.declarations[0].id.name))
+          })
+        const createReturn = t.returnStatement(t.objectExpression(createReturnList as ObjectProperty[]))
+        path.node.body = [...importList, createArrowFunction([...otherBody, ...expressionList, createReturn])]
+      },
+    })
+    const result = new generator.CodeGenerator(ast, {
+      jsescOption: { minimal: true },
+    }, code).generate()
+
+    if (!result.code)
+      console.error('replaceClassPropertyToRefOrReactive: 转换出错')
+
+    return result.code || ''
+  }
+  catch (error) {
+    console.error(error)
+    return code
+  }
+}
+
