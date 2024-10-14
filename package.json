@@ -1,6 +1,6 @@
 {
   "name": "vue-class-to-vue3-cli",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "type": "module",
   "description": "A script to convert your Vue class components to <script setup>  ",
   "main": "dist/index.js",
