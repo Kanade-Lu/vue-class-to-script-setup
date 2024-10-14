@@ -98,6 +98,11 @@ const replaceUniAppLiftStyle = (path: NodePath<t.ClassMethod>) => {
 }
 
 const replaceLifeStyle = (path: NodePath<t.ClassMethod>) => {
+
+  if (!path.node)
+    return
+  if (!('key' in path.node))
+    return
   const keyNode = path.node.key
   if (!t.isIdentifier(keyNode))
     return
