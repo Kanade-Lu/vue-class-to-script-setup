@@ -353,7 +353,7 @@ export const traverseCode = (code) => {
       const emitParams = t.arrayExpression([...emitList].map(item => t.stringLiteral(item)))
       const defineEmits = t.callExpression(t.identifier('defineEmits'), [emitParams])
       const emitAst = t.variableDeclaration('const', [t.variableDeclarator(t.identifier('$emit'), defineEmits)])
-      if (emitList.length > 0)
+      if ([...emitList].length > 0)
         path.node.body = [...importList, emitAst, ...definePropsList, ...refList, ...computedList, ...methodList, ...watchList, ...onMountedList]
       else
         path.node.body = [...importList, ...definePropsList, ...refList, ...computedList, ...methodList, ...watchList, ...onMountedList]
