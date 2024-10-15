@@ -1,4 +1,5 @@
 import { createUseXXX, traverseCode } from './options-traverse.js'
+import { traverseOptionsCode } from './options-ts.traverse.js'
 
 const replaceScriptToScriptSetup = (code: string) => {
   return code.replace(/<script (.*)>/g, (match: any, p1: string | string[]) => {
@@ -15,11 +16,17 @@ export const replaceNormalVariableToRef = (code: string, func: (arg0: any) => an
   })
 }
 
-export const handleOptions = (code: string, isTs = false) => {
+export const handleOptions = (code: string, isTs = false, isJs = false) => {
   if (isTs) {
     code = traverseCode(code)
     code = createUseXXX(code)
   }
+  if(isJs) {
+    code = traverseOptionsCode(code)
+  }
+
+
+
   else { code = replaceNormalVariableToRef(code, traverseCode) }
 
   code = replaceScriptToScriptSetup(code)

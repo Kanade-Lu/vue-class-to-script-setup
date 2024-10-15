@@ -56,13 +56,13 @@ export async function main() {
 }
 
 
-const transformOptions = async (currentWorkingDir: string, fileName: string, options = { isJs: false }) => {
+const transformOptions = async (currentWorkingDir: string, fileName: string, options = { isJs: false, isTs: false }) => {
   try {
     const stats = await fs.stat(`${currentWorkingDir}/${fileName}`);
     if (stats.isFile()) {
       const code = await fs.readFile(`${currentWorkingDir}/${fileName}`, "utf8");
       try {
-        await fs.writeFile(fileName, handleOptions(code, options.isJs));
+        await fs.writeFile(fileName, handleOptions(code, options.isJs, options.isTs));
         console.log(log.success, `已转换文件 ${fileName}`);
       } catch (error) {
         console.error(`出现错误: ${error}`);
@@ -75,7 +75,7 @@ const transformOptions = async (currentWorkingDir: string, fileName: string, opt
           if(stats.isFile()) {
             const code = await fs.readFile(`${currentWorkingDir}/${fileName}/${file}`, "utf8");
             try {
-              await fs.writeFile(`${currentWorkingDir}/${fileName}/${file}`, handleOptions(code, options.isJs));
+              await fs.writeFile(`${currentWorkingDir}/${fileName}/${file}`, handleOptions(code, options.isJs, options.isTs));
               console.log(log.success, `已转换文件 ${currentWorkingDir}/${fileName}/${file}`);
             } catch (error) {
               console.error(`出现错误: ${error}`);
@@ -97,7 +97,19 @@ export async function optionsMain() {
   let fileName = argv._[0]
   try {
     const currentWorkingDir = process.cwd();
-    transformOptions(currentWorkingDir, fileName, { isJs: fileName.includes('.js')});
+    transformOptions(currentWorkingDir, fileName, { isTs: fileName.includes('.ts'), isJs: fileName.includes('.js')});
+  } catch (error) {
+    console.error(`出现错误: ${error}`);
+  }
+}
+
+
+export async function optionsTsMain() {
+  const argv = minimist(process.argv.slice(3))
+  let fileName = argv._[0]
+  try {
+    const currentWorkingDir = process.cwd();
+    transformOptions(currentWorkingDir, fileName, { isTs: fileName.includes('.ts'), isJs: fileName.includes('.js')});
   } catch (error) {
     console.error(`出现错误: ${error}`);
   }

@@ -247,7 +247,7 @@ export const traverseCode = (code) => {
           const watchCallback = t.arrowFunctionExpression([t.identifier('newData')], t.cloneNode(item.body))
           const watchOptions = t.objectExpression([
             t.objectProperty(t.identifier('deep'), t.booleanLiteral(true)),
-            t.objectProperty(t.identifier('immerate'), t.booleanLiteral(true)),
+            t.objectProperty(t.identifier('immediate'), t.booleanLiteral(true)),
           ])
           const watchCall = t.callExpression(t.identifier('watch'), [
             t.arrowFunctionExpression([], t.MemberExpression(item.key, t.identifier('value'))),

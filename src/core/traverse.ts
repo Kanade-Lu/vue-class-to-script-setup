@@ -56,7 +56,6 @@ const createProp = ({
 }
 
 const replaceUniAppLiftStyle = (path: NodePath<t.ClassMethod>) => {
-
   if (!path.node)
     return
   if (!('key' in path.node))
@@ -75,8 +74,12 @@ const replaceUniAppLiftStyle = (path: NodePath<t.ClassMethod>) => {
   if (replaceKeyNodeNameList.includes(keyNode.name)) {
     const body = path.node.body.body
     const asyncFn = body.some((node) => {
-      if (t.isExpressionStatement(node))
+      if (t.isExpressionStatement(node)) {
+        if (t.isAssignmentExpression(node.expression))
+          return t.isAwaitExpression(node.expression.right)
+
         return t.isAwaitExpression(node.expression)
+      }
 
       return false
     })
@@ -238,6 +241,10 @@ const replaceClassPropertyToRefOrReactive = (path: NodePath<t.ClassDeclaration>)
 }
 
 const replaceVuex = (path: NodePath<t.ClassProperty>) => {
+
+  if(!path.node) return;
+  if(!('decorators' in path.node)) return;
+
   const decorators = path.node.decorators
   const expression = decorators && decorators[0] && decorators[0].expression
   if (!expression)
@@ -518,7 +525,7 @@ const addPointValue = (path: NodePath<t.MemberExpression>, refList?: Set<any>) =
   if (id?.name === property.name)
     return
 
-  if (refList.has(property.name)  && t.isThisExpression(path.node.object)) {
+  if (refList.has(property.name) && (t.isThisExpression(path.node.object))) {
     const newNode = t.memberExpression(node.object, t.identifier(`${property.name}.value`))
     path.replaceWith(newNode)
   }
@@ -682,6 +689,112 @@ const replaceArrowClassMethod = (path: NodePath<t.ClassProperty>) => {
   ])
 }
 
+const propsList: {
+  defaultValue: any
+  type: t.TSTypeAnnotation | null
+  key: t.Identifier
+  optional: boolean
+}[] = []
+const collectProps = (path: NodePath<t.ClassProperty>) => {
+  const item = path.node
+  const decorators = item.decorators
+  const expression = decorators?.[0].expression
+  if (decorators && Number(decorators?.length) > 0 && t.isCallExpression(expression)) {
+    if (t.isIdentifier(expression.callee) && expression.callee.name === 'Prop' && t.isIdentifier(item.key)) {
+      try {
+        let defaultValue
+        if (expression.arguments.length > 0 && t.isObjectExpression(expression.arguments[0])) {
+          const properties = expression.arguments[0].properties
+          if (t.isObjectProperty(properties[0]) && t.isIdentifier(properties[0].key) && properties[0].key.name === 'default')
+            defaultValue = properties[0].value
+        }
+        propsList.push({
+          defaultValue,
+          type: t.isTSTypeAnnotation(item.typeAnnotation) ? item.typeAnnotation : null,
+          optional: item.optional ?? false,
+          key: item.key,
+        })
+        path.remove()
+      }
+      catch (error) {
+        console.log('新加的错误')
+      }
+    }
+  }
+}
+function findLastIndex (array: string | any[], callback: (arg0: any) => any) {
+  for (let i = array.length - 1; i >= 0; i--) {
+    if (callback(array[i])) {
+      return i;
+    }
+  }
+  return -1;
+};
+const createDefineProps = (path: NodePath<t.Program>) => {
+  // 找到最后一个 import 语句
+  const parentBody = path.get('body')
+  const index = findLastIndex(parentBody, (p: object | null | undefined) => t.isImportDeclaration(p))
+
+  const hasDefault = propsList.filter(item => item.defaultValue).length > 0
+
+  const defineProps = t.callExpression(
+    t.identifier('defineProps'),
+    [],
+  )
+  defineProps.typeParameters = t.tSTypeParameterInstantiation(
+    [
+      t.tsTypeLiteral(
+        propsList.map((item) => {
+          const prop = t.tsPropertySignature(
+            item.key,
+            item.type,
+          )
+          prop.optional = item.optional
+          return prop
+        }),
+      ),
+    ],
+  )
+
+  const withDefaultValue = t.objectExpression(
+    propsList.filter(item => item.defaultValue).map(item => t.objectProperty(item.key, item.defaultValue)),
+  )
+  const newProps = t.variableDeclaration(
+    'const',
+    [
+      t.variableDeclarator(
+        t.identifier('props'),
+        hasDefault
+          ? t.callExpression(t.identifier('withDefaults'), [
+            defineProps,
+            withDefaultValue,
+          ])
+          : defineProps,
+      ),
+    ],
+  )
+
+  const toRefsProsp = t.variableDeclaration(
+    'const',
+    [t.variableDeclarator(
+      t.objectPattern(
+        propsList.map(item =>
+          t.objectProperty(item.key, item.key),
+        ),
+      ),
+      t.callExpression(
+        t.identifier('toRefs'),
+        [
+          t.identifier('props'),
+        ],
+      ),
+    )],
+  )
+
+  path.node.body.splice(index + 1, 0, newProps)
+  path.node.body.splice(index + 2, 0, toRefsProsp)
+}
+
 export const traverseCode = (code: string) => {
   const ast = parse(code, {
     sourceType: 'module',
@@ -691,27 +804,95 @@ export const traverseCode = (code: string) => {
   })
   traverse(ast, {
     ClassProperty(path) {
-      replaceVuex(path)
-      replaceArrowClassMethod(path)
+      try {
+        collectProps(path)
+      }
+      catch (error) {
+        console.error('collectProps', error)
+      }
+      try {
+        replaceVuex(path)
+      }
+      catch (error) {
+        console.error('replaceVuex', error)
+      }
+
+      try {
+        replaceArrowClassMethod(path)
+      }
+      catch (error) {
+        console.error('replaceArrowClassMethod', error)
+      }
     },
+
     ClassDeclaration(path) {
-      findAllComponentProps(path)
-      replaceClassPropertyToRefOrReactive(path)
-      removeClass(path)
+      try {
+        findAllComponentProps(path)
+      }
+      catch (error) {
+        console.error('findAllComponentProps', error)
+      }
+
+      try {
+        replaceClassPropertyToRefOrReactive(path)
+      }
+      catch (error) {
+        console.error('replaceClassPropertyToRefOrReactive', error)
+      }
+
+      try {
+        removeClass(path)
+      }
+      catch (error) {
+        console.error('removeClass', error)
+      }
     },
+
     ClassMethod(path) {
-      replaceLifeStyle(path)
-      replaceUniAppLiftStyle(path)
-      replaceGetToComputed(path)
-      replaceClassMethod(path)
+      try {
+        replaceLifeStyle(path)
+      }
+      catch (error) {
+        console.error('replaceLifeStyle', error)
+      }
+
+      try {
+        replaceUniAppLiftStyle(path)
+      }
+      catch (error) {
+        console.error('replaceUniAppLiftStyle', error)
+      }
+
+      try {
+        replaceGetToComputed(path)
+      }
+      catch (error) {
+        console.error('replaceGetToComputed', error)
+      }
+
+      try {
+        replaceClassMethod(path)
+      }
+      catch (error) {
+        console.error('replaceClassMethod', error)
+      }
     },
+
     MemberExpression(path: NodePath<t.MemberExpression>) {
-      addPointValue(path, refOrComputedProperty)
+      try {
+        addPointValue(path, refOrComputedProperty)
+      }
+      catch (error) {
+        console.error('addPointValue', error)
+      }
     },
   })
   traverse(ast, {
     ExpressionStatement(path: NodePath<t.ExpressionStatement>) {
       replaceReactiveExpressionStatement(path)
+    },
+    Program(path) {
+      createDefineProps(path)
     },
   })
 
@@ -812,7 +993,12 @@ export const createUseXXX = (code: string) => {
               return t.objectProperty(t.identifier(item.declarations[0].id.name), t.identifier(item.declarations[0].id.name))
           })
         const createReturn = t.returnStatement(t.objectExpression(createReturnList as ObjectProperty[]))
-        path.node.body = [...importList, createArrowFunction([...otherBody, ...expressionList, createReturn])]
+
+        const exportFunction = t.exportNamedDeclaration(
+          createArrowFunction([...otherBody, ...expressionList, createReturn]),
+        )
+
+        path.node.body = [...importList, exportFunction]
       },
     })
     const result = new generator.CodeGenerator(ast, {

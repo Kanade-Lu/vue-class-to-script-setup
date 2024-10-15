@@ -1,4 +1,4 @@
-import { ComponentProps, addPointValueForToRefs, resetComponentProps, traverseCode } from './traverse'
+import { ComponentProps, addPointValueForToRefs, createUseXXX, resetComponentProps, traverseCode } from './traverse'
 
 const regExpFindLastImport = /^(?!@)import.*$/gm
 const typeMap = {
@@ -368,10 +368,10 @@ export const resolveCode = (code: string, { isTs = false, toPinia = false, onlyT
   }
   else
     code = deletePropsAndPushDefineProps(code)
-  if (isTs)
-    code = traverseCode(code)
-  else
+
+  if (!isTs)
     code = replaceNormalVariableToRef(code, addPointValueForToRefs)
+
   code = deleteModelAndPushDefineModel(code)
   code = replaceScriptToScriptSetup(code)
   code = replaceVueRouter(code)
@@ -382,6 +382,9 @@ export const resolveCode = (code: string, { isTs = false, toPinia = false, onlyT
   if(toPinia) {
     code = replaceVuexToPinia(code)
   }
+
+  if (isTs)
+    code = createUseXXX(code)
   
   return code
 }
